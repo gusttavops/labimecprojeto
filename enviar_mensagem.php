@@ -1,34 +1,52 @@
 <?php
 session_start();
-include("conexao.php");
+header('Content-Type: application/json');
 
-// chat.php (ou api/enviar_mensagem.php)
+if (!isset($_SESSION['usuario']) || !isset($_SESSION['nome']) || !isset($_SESSION['user_id'])) {
+    echo json_encode(['error' => 'Não autenticado.']);
+    exit;
+}
 
-// ... (código existente) ...
+require_once __DIR__ . '/../includes/db.php';
+$current_user_id = $_SESSION['user_id'];
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mensagem']) && isset($_POST['id_destinatario'])) {
-    $id_remetente = $_SESSION['user_id']; // ID do usuário logado
-    $id_destinatario = $_POST['id_destinatario'];
-    $mensagem = $_POST['mensagem'];
+$data = json_decode(file_get_contents('php://input'), true);
 
-    // 1. **VERIFICAÇÃO DE CONTATO**
-    // Verifica se os dois usuários são contatos mútuos (ou se o remetente tem o destinatário como contato)
-    // Usando 'remetente_id' e 'destinatario_id' da sua tabela 'contatos'
-    $stmt_check_contact = $pdo->prepare("
-        SELECT COUNT(*)
-        FROM contatos
-        WHERE ((remetente_id = ? AND destinatario_id = ?) OR (remetente_id = ? AND destinatario_id = ?))
-        AND status = 'aceito'
-    ");
-    $stmt_check_contact->execute([$id_remetente, $id_destinatario, $id_destinatario, $id_remetente]);
-    $is_contact = $stmt_check_contact->fetchColumn();
+$destinatario_id = filter_var($data['destinatario_id'] ?? null, FILTER_VALIDATE_INT);
+$assunto = trim($data['assunto'] ?? '');
+$corpo_mensagem = trim($data['corpo_mensagem'] ?? '');
 
-    if ($is_contact > 0) {
-        // São contatos, pode enviar a mensagem
-        // ... (código para inserir a mensagem na tabela 'mensagens') ...
-    } else {
-        // Não são contatos, impede o envio da mensagem
-        // ... (código para exibir erro) ...
+if (!$destinatario_id || empty($assunto) || empty($corpo_mensagem)) {
+    echo json_encode(['error' => 'Dados incompletos para enviar a mensagem.']);
+    exit;
+}
+
+// Opcional: Verificar se o destinatário existe
+try {
+    $stmt = $pdo->prepare("SELECT id FROM usuarios WHERE id = ?");
+    $stmt->execute([$destinatario_id]);
+    if (!$stmt->fetch()) {
+        echo json_encode(['error' => 'Destinatário não encontrado.']);
+        exit;
     }
+} catch (PDOException $e) {
+    error_log("Erro ao verificar destinatário: " . $e->getMessage());
+    echo json_encode(['error' => 'Erro interno ao verificar destinatário.']);
+    exit;
+}
+
+
+try {
+    $stmt = $pdo->prepare("
+        INSERT INTO mensagens (remetente_id, destinatario_id, assunto, corpo_mensagem)
+        VALUES (?, ?, ?, ?)
+    ");
+    $stmt->execute([$current_user_id, $destinatario_id, $assunto, $corpo_mensagem]);
+
+    echo json_encode(['success' => true, 'message_id' => $pdo->lastInsertId()]);
+
+} catch (PDOException $e) {
+    error_log("Erro ao enviar mensagem: " . $e->getMessage());
+    echo json_encode(['error' => 'Erro ao enviar mensagem.']);
 }
 ?>
